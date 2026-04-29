@@ -1,22 +1,23 @@
 <?php
-header('Access-Control-Allow-Origin: *');
-header('Content-Type: text/plain');
+header("Access-Control-Allow-Origin: *");
+header("Content-Type: text/plain");
 
-$conn = new mysqli("sql300.infinityfree.com", "if0_41789653", "gargantiel09", "if0_41789653_queue_system");
+$conn = new mysqli(
+    getenv('MYSQLHOST') ?: 'mysql.railway.internal',
+    getenv('MYSQLUSER') ?: 'root',
+    getenv('MYSQLPASSWORD') ?: 'EACKHmjerPaLzPXVcmPXZgjApYplgdzo',
+    getenv('MYSQLDATABASE') ?: 'railway',
+    getenv('MYSQLPORT') ?: 3306
+);
 
 if ($conn->connect_error) {
     http_response_code(500);
-    die("Connection failed");
+    echo "DB_ERROR: " . $conn->connect_error;
+    exit;
 }
 
-$result = $conn->query("SELECT queue_num FROM queues WHERE status='serving' ORDER BY id DESC LIMIT 1");
-
-if ($result->num_rows === 0) {
-    echo "---";
-} else {
-    $row = $result->fetch_assoc();
-    echo $row['queue_num'];
-}
-
+$result = $conn->query("SELECT queue_number FROM current_serving WHERE id=1");
+$row = $result->fetch_assoc();
 $conn->close();
-?>
+
+echo $row ? $row['queue_number'] : '---';

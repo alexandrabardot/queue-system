@@ -28,8 +28,6 @@
     }
     h2 { color: #555; margin-bottom: 8px; font-size: 16px; text-transform: uppercase; letter-spacing: 1px; }
     .number { font-size: 72px; font-weight: bold; color: #2563eb; margin: 8px 0; line-height: 1; }
-    .serving-number { font-size: 72px; font-weight: bold; color: #16a34a; margin: 8px 0; line-height: 1; }
-    .waiting-number { font-size: 48px; font-weight: bold; color: #d97706; margin: 8px 0; line-height: 1; }
     .sub { color: #999; font-size: 13px; margin-top: 6px; }
     button {
       background: #2563eb;
@@ -50,14 +48,13 @@
       max-width: 360px;
     }
     .row .card { flex: 1; padding: 20px 12px; }
-    .row .number-sm { font-size: 48px; font-weight: bold; margin: 6px 0; line-height: 1; }
+    .number-sm { font-size: 48px; font-weight: bold; margin: 6px 0; line-height: 1; }
     .green { color: #16a34a; }
     .amber { color: #d97706; }
   </style>
 </head>
 <body>
 
-  <!-- Now Serving + Waiting side by side -->
   <div class="row">
     <div class="card">
       <h2>Serving</h2>
@@ -71,7 +68,6 @@
     </div>
   </div>
 
-  <!-- Get Your Number -->
   <div class="card">
     <h2>Get Your Number</h2>
     <div class="number" id="my-number">---</div>
@@ -81,13 +77,22 @@
 
   <script>
     const BASE_URL = '';
+    let myNumber = null;        // e.g. "A003"
+    let myNumberInt = 0;        // e.g. 3
+
+    function parseNum(str) {
+      // Extract the integer from "A003" → 3
+      return parseInt(str.replace(/\D/g, ''), 10) || 0;
+    }
 
     function getNumber() {
       document.getElementById('my-status').textContent = 'Getting number...';
       fetch(BASE_URL + '/get_queue.php')
         .then(r => r.text())
         .then(num => {
-          document.getElementById('my-number').textContent = num.trim();
+          myNumber = num.trim();
+          myNumberInt = parseNum(myNumber);
+          document.getElementById('my-number').textContent = myNumber;
           document.getElementById('my-status').textContent = 'Please wait for your number to be called.';
         })
         .catch(() => {
@@ -107,11 +112,27 @@
           document.getElementById('serving-status').textContent = 'Could not connect';
         });
 
-      // Check waiting count
+      // Check waiting count + detect reset
       fetch(BASE_URL + '/waiting_api.php')
         .then(r => r.text())
         .then(count => {
-          document.getElementById('waiting').textContent = count.trim();
+          const waiting = parseInt(count.trim(), 10);
+          document.getElementById('waiting').textContent = waiting;
+
+          // If queue was reset (total queue is smaller than my number), clear my number
+          if (myNumber !== null) {
+            fetch(BASE_URL + '/total_api.php')
+              .then(r => r.text())
+              .then(total => {
+                const totalInt = parseInt(total.trim(), 10);
+                if (totalInt < myNumberInt) {
+                  myNumber = null;
+                  myNumberInt = 0;
+                  document.getElementById('my-number').textContent = '---';
+                  document.getElementById('my-status').textContent = 'Queue was reset. Tap to get a new number.';
+                }
+              });
+          }
         })
         .catch(() => {
           document.getElementById('waiting').textContent = '--';

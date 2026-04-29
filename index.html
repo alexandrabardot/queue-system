@@ -15,21 +15,22 @@
       justify-content: center;
       min-height: 100vh;
       padding: 20px;
+      gap: 16px;
     }
     .card {
       background: white;
       border-radius: 16px;
-      padding: 32px 24px;
+      padding: 28px 24px;
       width: 100%;
       max-width: 360px;
       box-shadow: 0 4px 20px rgba(0,0,0,0.1);
       text-align: center;
-      margin-bottom: 20px;
     }
-    h2 { color: #333; margin-bottom: 8px; font-size: 18px; }
-    .number { font-size: 64px; font-weight: bold; color: #2563eb; margin: 16px 0; }
-    .serving-number { font-size: 64px; font-weight: bold; color: #16a34a; margin: 16px 0; }
-    p { color: #666; font-size: 14px; margin-bottom: 20px; }
+    h2 { color: #555; margin-bottom: 8px; font-size: 16px; text-transform: uppercase; letter-spacing: 1px; }
+    .number { font-size: 72px; font-weight: bold; color: #2563eb; margin: 8px 0; line-height: 1; }
+    .serving-number { font-size: 72px; font-weight: bold; color: #16a34a; margin: 8px 0; line-height: 1; }
+    .waiting-number { font-size: 48px; font-weight: bold; color: #d97706; margin: 8px 0; line-height: 1; }
+    .sub { color: #999; font-size: 13px; margin-top: 6px; }
     button {
       background: #2563eb;
       color: white;
@@ -39,29 +40,47 @@
       font-size: 16px;
       cursor: pointer;
       width: 100%;
+      margin-top: 12px;
     }
     button:active { background: #1d4ed8; }
-    .status { font-size: 13px; color: #999; margin-top: 12px; }
+    .row {
+      display: flex;
+      gap: 12px;
+      width: 100%;
+      max-width: 360px;
+    }
+    .row .card { flex: 1; padding: 20px 12px; }
+    .row .number-sm { font-size: 48px; font-weight: bold; margin: 6px 0; line-height: 1; }
+    .green { color: #16a34a; }
+    .amber { color: #d97706; }
   </style>
 </head>
 <body>
 
-  <div class="card">
-    <h2>Now Serving</h2>
-    <div class="serving-number" id="serving">---</div>
-    <div class="status" id="serving-status">Checking...</div>
+  <!-- Now Serving + Waiting side by side -->
+  <div class="row">
+    <div class="card">
+      <h2>Serving</h2>
+      <div class="number-sm green" id="serving">---</div>
+      <div class="sub" id="serving-status">Checking...</div>
+    </div>
+    <div class="card">
+      <h2>Waiting</h2>
+      <div class="number-sm amber" id="waiting">--</div>
+      <div class="sub">in queue</div>
+    </div>
   </div>
 
+  <!-- Get Your Number -->
   <div class="card">
     <h2>Get Your Number</h2>
-    <p>Tap the button to get your queue number.</p>
     <div class="number" id="my-number">---</div>
+    <div class="sub" id="my-status">Tap the button to join the queue.</div>
     <button onclick="getNumber()">Get My Number</button>
-    <div class="status" id="my-status"></div>
   </div>
 
   <script>
-    const BASE_URL = '';  // same server, relative path
+    const BASE_URL = '';
 
     function getNumber() {
       document.getElementById('my-status').textContent = 'Getting number...';
@@ -76,7 +95,8 @@
         });
     }
 
-    function checkServing() {
+    function checkStatus() {
+      // Check serving
       fetch(BASE_URL + '/current_api.php')
         .then(r => r.text())
         .then(num => {
@@ -86,10 +106,20 @@
         .catch(() => {
           document.getElementById('serving-status').textContent = 'Could not connect';
         });
+
+      // Check waiting count
+      fetch(BASE_URL + '/waiting_api.php')
+        .then(r => r.text())
+        .then(count => {
+          document.getElementById('waiting').textContent = count.trim();
+        })
+        .catch(() => {
+          document.getElementById('waiting').textContent = '--';
+        });
     }
 
-    checkServing();
-    setInterval(checkServing, 3000);
+    checkStatus();
+    setInterval(checkStatus, 3000);
   </script>
 </body>
 </html>

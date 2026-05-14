@@ -1,55 +1,26 @@
 <?php
 header("Access-Control-Allow-Origin: *");
 header("Content-Type: text/plain");
+require 'db.php';
+$conn = getDB();
 
-$conn = new mysqli(
-    getenv('MYSQLHOST') ?: 'mysql.railway.internal',
-    getenv('MYSQLUSER') ?: 'root',
-    getenv('MYSQLPASSWORD') ?: 'EACKHmjerPaLzPXVcmPXZgjApYplgdzo',
-    getenv('MYSQLDATABASE') ?: 'railway',
-    getenv('MYSQLPORT') ?: 3306
-);
+pg_query($conn, "UPDATE queue SET status='done' WHERE status='serving'");
 
-if ($conn->connect_error) { http_response_code(500); echo "DB_ERROR: " . $conn->connect_error; exit; }
-
-// Mark current serving as done
-$conn->query("UPDATE queue SET status='done' WHERE status='serving'");
-
-// Get next waiting
-$result = $conn->query("SELECT id, queue_number FROM queue WHERE status='waiting' ORDER BY id ASC LIMIT 1");
-
-if ($result->num_rows === 0) {
-    $conn->query("UPDATE current_serving SET queue_number='---' WHERE id=1");
-    $conn->close();
+$result = pg_query($conn, "SELECT id, queue_number FROM queue WHERE status='waiting' ORDER BY id ASC LIMIT 1");
+if (!$result || pg_num_rows($result) === 0) {
+    pg_query($conn, "UPDATE current_serving SET queue_number='---' WHERE id=1");
     echo "NO_QUEUE";
     exit;
 }
 
-$row = $result->fetch_assoc();
+$row = pg_fetch_assoc($result);
 $id = $row['id'];
 $queue_number = $row['queue_number'];
 
-// Mark as serving
-$stmt = $conn->prepare("UPDATE queue SET status='serving' WHERE id=?");
-$stmt->bind_param("i", $id);
-$stmt->execute();
-$stmt->close();
+pg_query_params($conn, "UPDATE queue SET status='serving' WHERE id=$1", [$id]);
+pg_query_params($conn, "UPDATE current_serving SET queue_number=$1 WHERE id=1", [$queue_number]);
+pg_query_params($conn, "INSERT INTO history (queue_number, served_at) VALUES ($1, NOW())", [$queue_number]);
 
-// Update current display
-$stmt2 = $conn->prepare("UPDATE current_serving SET queue_number=? WHERE id=1");
-$stmt2->bind_param("s", $queue_number);
-$stmt2->execute();
-$stmt2->close();
-
-// Save to history
-$stmt3 = $conn->prepare("INSERT INTO history (queue_number, served_at) VALUES (?, NOW())");
-$stmt3->bind_param("s", $queue_number);
-$stmt3->execute();
-$stmt3->close();
-
-$conn->close();
-
-// Trigger push notification (non-blocking)
 $base_url = (isset($_SERVER['HTTPS']) ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'];
 @file_get_contents($base_url . '/notify_api.php?queue_number=' . urlencode($queue_number));
 

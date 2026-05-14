@@ -41,6 +41,15 @@
       margin-top: 12px;
     }
     button:active { background: #1d4ed8; }
+    button:disabled { background: #93c5fd; cursor: not-allowed; }
+    .btn-notify {
+      background: #16a34a;
+      margin-top: 8px;
+      font-size: 14px;
+      padding: 10px;
+    }
+    .btn-notify.granted { background: #15803d; }
+    .btn-notify.denied  { background: #9ca3af; cursor: not-allowed; }
     .row {
       display: flex;
       gap: 12px;
@@ -51,6 +60,32 @@
     .number-sm { font-size: 48px; font-weight: bold; margin: 6px 0; line-height: 1; }
     .green { color: #16a34a; }
     .amber { color: #d97706; }
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1e293b;
+      color: white;
+      padding: 12px 24px;
+      border-radius: 10px;
+      font-size: 14px;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+      z-index: 999;
+      white-space: nowrap;
+    }
+    .toast.show { opacity: 1; }
+    .notify-badge {
+      display: inline-block;
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 99px;
+      margin-top: 6px;
+    }
+    .badge-on  { background: #dcfce7; color: #15803d; }
+    .badge-off { background: #fee2e2; color: #b91c1c; }
   </style>
 </head>
 <body>
@@ -72,71 +107,200 @@
     <h2>Get Your Number</h2>
     <div class="number" id="my-number">---</div>
     <div class="sub" id="my-status">Tap the button to join the queue.</div>
-    <button onclick="getNumber()">Get My Number</button>
+    <button id="btn-get" onclick="getNumber()">Get My Number</button>
+
+    <!-- Notification toggle, shown after getting a number -->
+    <div id="notify-section" style="display:none; margin-top:12px;">
+      <button class="btn-notify" id="btn-notify" onclick="requestNotify()">
+        🔔 Notify me when it's my turn
+      </button>
+      <div id="notify-badge" class="notify-badge badge-off">Notifications off</div>
+    </div>
   </div>
+
+  <div class="toast" id="toast"></div>
 
   <script>
     const BASE_URL = '';
-    let myNumber = null;        // e.g. "A003"
-    let myNumberInt = 0;        // e.g. 3
 
-    function parseNum(str) {
-      // Extract the integer from "A003" → 3
-      return parseInt(str.replace(/\D/g, ''), 10) || 0;
+    // ── Device ID (persisted in localStorage) ──────────────
+    let deviceId = localStorage.getItem('queue_device_id');
+    if (!deviceId) {
+      deviceId = 'dev_' + Math.random().toString(36).substr(2, 12) + Date.now();
+      localStorage.setItem('queue_device_id', deviceId);
     }
 
+    let myNumber = localStorage.getItem('queue_my_number') || null;
+    let myNumberInt = myNumber ? parseInt(myNumber.replace(/\D/g,''), 10) : 0;
+    let pushSubscription = null;
+
+    // Restore UI if already have a number
+    if (myNumber) {
+      document.getElementById('my-number').textContent = myNumber;
+      document.getElementById('my-status').textContent = 'Please wait for your number to be called.';
+      document.getElementById('notify-section').style.display = 'block';
+      document.getElementById('btn-get').disabled = true;
+      document.getElementById('btn-get').textContent = 'Number Already Issued';
+      checkNotifyStatus();
+    }
+
+    // ── Toast ───────────────────────────────────────────────
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    // ── Get Number ──────────────────────────────────────────
     function getNumber() {
-      document.getElementById('my-status').textContent = 'Getting number...';
-      fetch(BASE_URL + '/get_queue.php')
+      const btn = document.getElementById('btn-get');
+      btn.disabled = true;
+      btn.textContent = 'Getting number...';
+
+      fetch(BASE_URL + '/get_queue.php?device_id=' + encodeURIComponent(deviceId))
         .then(r => r.text())
-        .then(num => {
-          myNumber = num.trim();
-          myNumberInt = parseNum(myNumber);
+        .then(raw => {
+          const num = raw.trim();
+          if (num.startsWith('EXISTING:')) {
+            myNumber = num.replace('EXISTING:', '');
+          } else {
+            myNumber = num;
+          }
+          myNumberInt = parseInt(myNumber.replace(/\D/g,''), 10);
+          localStorage.setItem('queue_my_number', myNumber);
+
           document.getElementById('my-number').textContent = myNumber;
           document.getElementById('my-status').textContent = 'Please wait for your number to be called.';
+          document.getElementById('notify-section').style.display = 'block';
+          btn.textContent = 'Number Already Issued';
+          checkNotifyStatus();
         })
         .catch(() => {
-          document.getElementById('my-status').textContent = 'Error. Please try again.';
+          btn.disabled = false;
+          btn.textContent = 'Get My Number';
+          showToast('Error. Please try again.');
         });
     }
 
+    // ── Push Notifications ──────────────────────────────────
+    const VAPID_PUBLIC = ''; // No VAPID needed for basic push check
+
+    function checkNotifyStatus() {
+      if (!('Notification' in window)) {
+        document.getElementById('btn-notify').textContent = '🔔 Notifications not supported';
+        document.getElementById('btn-notify').classList.add('denied');
+        return;
+      }
+      if (Notification.permission === 'granted') {
+        document.getElementById('btn-notify').textContent = '✅ Notifications enabled';
+        document.getElementById('btn-notify').classList.add('granted');
+        document.getElementById('notify-badge').textContent = 'Notifications on';
+        document.getElementById('notify-badge').className = 'notify-badge badge-on';
+        // Re-subscribe in case it was lost
+        subscribeForPush();
+      } else if (Notification.permission === 'denied') {
+        document.getElementById('btn-notify').textContent = '🔕 Notifications blocked';
+        document.getElementById('btn-notify').classList.add('denied');
+      }
+    }
+
+    function requestNotify() {
+      if (!('Notification' in window)) { showToast('Notifications not supported on this browser.'); return; }
+      if (Notification.permission === 'denied') { showToast('Notifications are blocked. Please enable them in browser settings.'); return; }
+
+      Notification.requestPermission().then(permission => {
+        if (permission === 'granted') {
+          subscribeForPush();
+          document.getElementById('btn-notify').textContent = '✅ Notifications enabled';
+          document.getElementById('btn-notify').classList.add('granted');
+          document.getElementById('notify-badge').textContent = 'Notifications on';
+          document.getElementById('notify-badge').className = 'notify-badge badge-on';
+          showToast('You will be notified when your number is called!');
+        } else {
+          showToast('Notification permission denied.');
+        }
+      });
+    }
+
+    function subscribeForPush() {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+      navigator.serviceWorker.ready.then(reg => {
+        reg.pushManager.getSubscription().then(sub => {
+          if (sub) {
+            saveSub(sub);
+          } else {
+            // Can't subscribe without VAPID keys so use notification API only
+          }
+        });
+      });
+    }
+
+    function saveSub(sub) {
+      const data = sub.toJSON();
+      data.queue_number = myNumber;
+      fetch(BASE_URL + '/push_api.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+    }
+
+    // ── Service Worker for local notifications ──────────────
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+
+    // ── Status Polling ──────────────────────────────────────
     function checkStatus() {
-      // Check serving
       fetch(BASE_URL + '/current_api.php')
         .then(r => r.text())
         .then(num => {
-          document.getElementById('serving').textContent = num.trim();
+          const serving = num.trim();
+          document.getElementById('serving').textContent = serving;
           document.getElementById('serving-status').textContent = 'Updated just now';
+
+          // Check if my number is now being served
+          if (myNumber && serving === myNumber) {
+            showToast('🔔 Number ' + myNumber + ' — please proceed to the counter!');
+            // Local notification
+            if (Notification.permission === 'granted') {
+              new Notification('Your turn!', {
+                body: 'Number ' + myNumber + ' is now being served. Please proceed to the counter.',
+                icon: '/icon.png'
+              });
+            }
+          }
         })
         .catch(() => {
           document.getElementById('serving-status').textContent = 'Could not connect';
         });
 
-      // Check waiting count + detect reset
       fetch(BASE_URL + '/waiting_api.php')
         .then(r => r.text())
         .then(count => {
-          const waiting = parseInt(count.trim(), 10);
-          document.getElementById('waiting').textContent = waiting;
+          document.getElementById('waiting').textContent = count.trim();
 
-          // If queue was reset (total queue is smaller than my number), clear my number
+          // Detect reset
           if (myNumber !== null) {
             fetch(BASE_URL + '/total_api.php')
               .then(r => r.text())
               .then(total => {
-                const totalInt = parseInt(total.trim(), 10);
-                if (totalInt < myNumberInt) {
+                if (parseInt(total.trim(), 10) < myNumberInt) {
                   myNumber = null;
                   myNumberInt = 0;
+                  localStorage.removeItem('queue_my_number');
                   document.getElementById('my-number').textContent = '---';
                   document.getElementById('my-status').textContent = 'Queue was reset. Tap to get a new number.';
+                  document.getElementById('notify-section').style.display = 'none';
+                  const btn = document.getElementById('btn-get');
+                  btn.disabled = false;
+                  btn.textContent = 'Get My Number';
                 }
               });
           }
         })
-        .catch(() => {
-          document.getElementById('waiting').textContent = '--';
-        });
+        .catch(() => { document.getElementById('waiting').textContent = '--'; });
     }
 
     checkStatus();

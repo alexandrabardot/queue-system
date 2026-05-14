@@ -10,13 +10,10 @@ $conn = new mysqli(
     getenv('MYSQLPORT') ?: 3306
 );
 
-if ($conn->connect_error) {
-    http_response_code(500);
-    echo "DB_ERROR: " . $conn->connect_error;
-    exit;
-}
+if ($conn->connect_error) { http_response_code(500); echo "DB_ERROR: " . $conn->connect_error; exit; }
 
 $conn->query("DELETE FROM queue");
+$conn->query("DELETE FROM push_subscriptions");
 $conn->query("UPDATE current_serving SET queue_number='---' WHERE id=1");
 $conn->query("ALTER TABLE queue AUTO_INCREMENT = 1");
 $conn->close();

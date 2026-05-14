@@ -50,6 +50,7 @@
     }
     .btn-notify.granted { background: #15803d; }
     .btn-notify.denied  { background: #9ca3af; cursor: not-allowed; }
+    .btn-closed { background: #6b7280; }
     .row {
       display: flex;
       gap: 12px;
@@ -60,6 +61,7 @@
     .number-sm { font-size: 48px; font-weight: bold; margin: 6px 0; line-height: 1; }
     .green { color: #16a34a; }
     .amber { color: #d97706; }
+    .red   { color: #dc2626; }
     .toast {
       position: fixed;
       bottom: 24px;
@@ -86,6 +88,16 @@
     }
     .badge-on  { background: #dcfce7; color: #15803d; }
     .badge-off { background: #fee2e2; color: #b91c1c; }
+    .closed-banner {
+      background: #fee2e2;
+      color: #b91c1c;
+      border-radius: 10px;
+      padding: 10px;
+      font-size: 14px;
+      font-weight: bold;
+      margin-bottom: 4px;
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -104,12 +116,12 @@
   </div>
 
   <div class="card">
+    <div class="closed-banner" id="closed-banner">🚫 Queue is currently closed</div>
     <h2>Get Your Number</h2>
     <div class="number" id="my-number">---</div>
     <div class="sub" id="my-status">Tap the button to join the queue.</div>
     <button id="btn-get" onclick="getNumber()">Get My Number</button>
 
-    <!-- Notification toggle, shown after getting a number -->
     <div id="notify-section" style="display:none; margin-top:12px;">
       <button class="btn-notify" id="btn-notify" onclick="requestNotify()">
         🔔 Notify me when it's my turn
@@ -123,7 +135,7 @@
   <script>
     const BASE_URL = '';
 
-    // ── Device ID (persisted in localStorage) ──────────────
+    // ── Device ID ───────────────────────────────────────────
     let deviceId = localStorage.getItem('queue_device_id');
     if (!deviceId) {
       deviceId = 'dev_' + Math.random().toString(36).substr(2, 12) + Date.now();
@@ -132,7 +144,7 @@
 
     let myNumber = localStorage.getItem('queue_my_number') || null;
     let myNumberInt = myNumber ? parseInt(myNumber.replace(/\D/g,''), 10) : 0;
-    let pushSubscription = null;
+    let queueClosed = false;
 
     // Restore UI if already have a number
     if (myNumber) {
@@ -152,8 +164,39 @@
       setTimeout(() => t.classList.remove('show'), 3000);
     }
 
+    // ── Queue closed UI ─────────────────────────────────────
+    function setQueueClosed(closed) {
+      queueClosed = closed;
+      const banner = document.getElementById('closed-banner');
+      const btn = document.getElementById('btn-get');
+      if (closed) {
+        banner.style.display = 'block';
+        btn.disabled = true;
+        btn.textContent = 'Queue Closed';
+        btn.classList.add('btn-closed');
+        // Clear my number if queue was reset
+        if (myNumber) {
+          myNumber = null;
+          myNumberInt = 0;
+          localStorage.removeItem('queue_my_number');
+          document.getElementById('my-number').textContent = '---';
+          document.getElementById('my-status').textContent = 'Queue is currently closed. Check back later.';
+          document.getElementById('notify-section').style.display = 'none';
+        }
+      } else {
+        banner.style.display = 'none';
+        if (!myNumber) {
+          btn.disabled = false;
+          btn.textContent = 'Get My Number';
+          btn.classList.remove('btn-closed');
+          document.getElementById('my-status').textContent = 'Tap the button to join the queue.';
+        }
+      }
+    }
+
     // ── Get Number ──────────────────────────────────────────
     function getNumber() {
+      if (queueClosed) { showToast('Queue is currently closed.'); return; }
       const btn = document.getElementById('btn-get');
       btn.disabled = true;
       btn.textContent = 'Getting number...';
@@ -184,8 +227,6 @@
     }
 
     // ── Push Notifications ──────────────────────────────────
-    const VAPID_PUBLIC = ''; // No VAPID needed for basic push check
-
     function checkNotifyStatus() {
       if (!('Notification' in window)) {
         document.getElementById('btn-notify').textContent = '🔔 Notifications not supported';
@@ -197,8 +238,6 @@
         document.getElementById('btn-notify').classList.add('granted');
         document.getElementById('notify-badge').textContent = 'Notifications on';
         document.getElementById('notify-badge').className = 'notify-badge badge-on';
-        // Re-subscribe in case it was lost
-        subscribeForPush();
       } else if (Notification.permission === 'denied') {
         document.getElementById('btn-notify').textContent = '🔕 Notifications blocked';
         document.getElementById('btn-notify').classList.add('denied');
@@ -206,12 +245,10 @@
     }
 
     function requestNotify() {
-      if (!('Notification' in window)) { showToast('Notifications not supported on this browser.'); return; }
-      if (Notification.permission === 'denied') { showToast('Notifications are blocked. Please enable them in browser settings.'); return; }
-
+      if (!('Notification' in window)) { showToast('Notifications not supported.'); return; }
+      if (Notification.permission === 'denied') { showToast('Notifications blocked. Enable in browser settings.'); return; }
       Notification.requestPermission().then(permission => {
         if (permission === 'granted') {
-          subscribeForPush();
           document.getElementById('btn-notify').textContent = '✅ Notifications enabled';
           document.getElementById('btn-notify').classList.add('granted');
           document.getElementById('notify-badge').textContent = 'Notifications on';
@@ -223,36 +260,14 @@
       });
     }
 
-    function subscribeForPush() {
-      if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
-      navigator.serviceWorker.ready.then(reg => {
-        reg.pushManager.getSubscription().then(sub => {
-          if (sub) {
-            saveSub(sub);
-          } else {
-            // Can't subscribe without VAPID keys so use notification API only
-          }
-        });
-      });
-    }
-
-    function saveSub(sub) {
-      const data = sub.toJSON();
-      data.queue_number = myNumber;
-      fetch(BASE_URL + '/push_api.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-    }
-
-    // ── Service Worker for local notifications ──────────────
+    // ── Service Worker ──────────────────────────────────────
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch(() => {});
     }
 
     // ── Status Polling ──────────────────────────────────────
     function checkStatus() {
+      // Check serving
       fetch(BASE_URL + '/current_api.php')
         .then(r => r.text())
         .then(num => {
@@ -260,10 +275,9 @@
           document.getElementById('serving').textContent = serving;
           document.getElementById('serving-status').textContent = 'Updated just now';
 
-          // Check if my number is now being served
+          // Notify if my number is now being served
           if (myNumber && serving === myNumber) {
             showToast('🔔 Number ' + myNumber + ' — please proceed to the counter!');
-            // Local notification
             if (Notification.permission === 'granted') {
               new Notification('Your turn!', {
                 body: 'Number ' + myNumber + ' is now being served. Please proceed to the counter.',
@@ -276,31 +290,46 @@
           document.getElementById('serving-status').textContent = 'Could not connect';
         });
 
+      // Check waiting count
       fetch(BASE_URL + '/waiting_api.php')
         .then(r => r.text())
         .then(count => {
           document.getElementById('waiting').textContent = count.trim();
+        })
+        .catch(() => {
+          document.getElementById('waiting').textContent = '--';
+        });
 
-          // Detect reset
-          if (myNumber !== null) {
-            fetch(BASE_URL + '/total_api.php')
-              .then(r => r.text())
-              .then(total => {
-                if (parseInt(total.trim(), 10) < myNumberInt) {
-                  myNumber = null;
-                  myNumberInt = 0;
-                  localStorage.removeItem('queue_my_number');
-                  document.getElementById('my-number').textContent = '---';
-                  document.getElementById('my-status').textContent = 'Queue was reset. Tap to get a new number.';
-                  document.getElementById('notify-section').style.display = 'none';
-                  const btn = document.getElementById('btn-get');
-                  btn.disabled = false;
-                  btn.textContent = 'Get My Number';
-                }
-              });
+      // Check if app is offline / queue auto-reset
+      fetch(BASE_URL + '/check_reset_api.php')
+        .then(r => r.text())
+        .then(status => {
+          const s = status.trim();
+          if (s === 'AUTO_RESET' || s === 'CLOSED') {
+            setQueueClosed(true);
+          } else {
+            setQueueClosed(false);
+            // Also check for manual reset via total count
+            if (myNumber !== null) {
+              fetch(BASE_URL + '/total_api.php')
+                .then(r => r.text())
+                .then(total => {
+                  if (parseInt(total.trim(), 10) < myNumberInt) {
+                    myNumber = null;
+                    myNumberInt = 0;
+                    localStorage.removeItem('queue_my_number');
+                    document.getElementById('my-number').textContent = '---';
+                    document.getElementById('my-status').textContent = 'Queue was reset. Tap to get a new number.';
+                    document.getElementById('notify-section').style.display = 'none';
+                    const btn = document.getElementById('btn-get');
+                    btn.disabled = false;
+                    btn.textContent = 'Get My Number';
+                  }
+                });
+            }
           }
         })
-        .catch(() => { document.getElementById('waiting').textContent = '--'; });
+        .catch(() => {});
     }
 
     checkStatus();

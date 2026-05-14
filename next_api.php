@@ -21,7 +21,4 @@ pg_query_params($conn, "UPDATE queue SET status='serving' WHERE id=$1", [$id]);
 pg_query_params($conn, "UPDATE current_serving SET queue_number=$1 WHERE id=1", [$queue_number]);
 pg_query_params($conn, "INSERT INTO history (queue_number, served_at) VALUES ($1, NOW())", [$queue_number]);
 
-$base_url = (isset($_SERVER['HTTPS']) ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'];
-@file_get_contents($base_url . '/notify_api.php?queue_number=' . urlencode($queue_number));
-
 echo $queue_number;
